@@ -365,153 +365,224 @@ function showScreen(id){
   if(id==='live') setTimeout(()=>showScreen('album'), 5000);
 }
 
-/* ==================== 3D小跑酷 ==================== */
+/* ==================== 回忆跑酷 ==================== */
 let runRAF=null, runTimer=null;
 function initRun(){
   const cv = $('runCanvas');
   const ctx = cv.getContext('2d');
   const W = cv.width = window.innerWidth;
   const H = cv.height = window.innerHeight;
-  let lane = 1; // 0,1,2 三车道
-  let targetLane = 1;
-  let score = 0;
-  let timeLeft = 30;
-  let obs = [];
-  let stars = [];
-  let speed = 3;
+  let lane = 1, targetLane = 1;
+  let distance = 0;
   let running = true;
+  let flashT = 0;
+  let freeze = 0;
+  let textIdx = 0, textChars = 0, textTimer = 0, textAlpha = 0;
+  let endingFade = 0;
+  let groundOffset = 0;
+  let stars = [];
 
-  $('runScore').textContent = '⭐ 0';
-  $('runTimer').textContent = '30';
+  // 回忆节点：慢速跑过，每段停留打字
+  const MEM = [
+    {dist: 0,    text: '2026.1.19，刷到你的那晚'},
+    {dist: 400,  text: '你主动加我，让我进群'},
+    {dist: 800,  text: '后来成习惯了，每天来看你'},
+    {dist: 1200, text: '第一个星守护，第一个会员'},
+    {dist: 1600, text: '10级，第一个嘉年华'},
+    {dist: 2000, text: '3.30，第一个宇宙之心'},
+    {dist: 2400, text: '6.1，橙色满级'},
+    {dist: 2800, text: '11.5，你的生日'},
+  ];
+
+  $('runScore').textContent = '回忆';
+  $('runTimer').textContent = '';
+  $('runHint').style.opacity = '0';
 
   // 触摸控制
   let touchStartX = 0;
   cv.ontouchstart = e => { touchStartX = e.touches[0].clientX; };
   cv.ontouchend = e => {
     const dx = e.changedTouches[0].clientX - touchStartX;
-    if(dx > 30 && targetLane < 2) targetLane++;
-    else if(dx < -30 && targetLane > 0) targetLane--;
+    if(dx > 30 && targetLane > 0) targetLane--;
+    else if(dx < -30 && targetLane < 2) targetLane++;
   };
-
-  // 键盘控制（电脑调试）
   document.onkeydown = e => {
     if(e.key==='ArrowLeft' && targetLane>0) targetLane--;
     if(e.key==='ArrowRight' && targetLane<2) targetLane++;
   };
 
+  // 胶片颗粒
+  const grain = document.createElement('canvas');
+  grain.width = 128; grain.height = 128;
+  const gg = grain.getContext('2d');
+  const gd = gg.createImageData(128,128);
+  for(let i=0;i<gd.data.length;i+=4){
+    const v = Math.random()*255;
+    gd.data[i]=gd.data[i+1]=gd.data[i+2]=v; gd.data[i+3]=16;
+  }
+  gg.putImageData(gd,0,0);
+  const grainPat = ctx.createPattern(grain,'repeat');
+
   function laneX(l, z){
     const cx = W/2;
-    const roadW = 120 + (1-z)*W*0.6;
-    return cx + (l-1) * roadW/3;
+    const roadW = 100 + (1-z)*W*0.7;
+    return cx + (l-1)*roadW/3;
   }
 
-  function spawn(){
-    if(Math.random() < 0.5){
-      obs.push({l: Math.floor(Math.random()*3), z: 0, type: 'obstacle'});
-    } else {
-      stars.push({l: Math.floor(Math.random()*3), z: 0, type: 'star'});
-    }
-  }
-
-  let spawnTimer = 0;
+  let frameCount = 0;
   function frame(){
     if(!running) return;
+    frameCount++;
     ctx.clearRect(0,0,W,H);
 
-    // 天空渐变
+    // 暖色渐变背景
     const sky = ctx.createLinearGradient(0,0,0,H);
-    sky.addColorStop(0,'#0a0a2e');
-    sky.addColorStop(0.6,'#1a1a4e');
-    sky.addColorStop(1,'#2a1a3e');
+    sky.addColorStop(0,'#1a1520');
+    sky.addColorStop(0.5,'#2a1f2a');
+    sky.addColorStop(1,'#1a1520');
     ctx.fillStyle = sky;
     ctx.fillRect(0,0,W,H);
 
-    // 跑道（透视梯形）
+    // 闪回黑场
+    if(flashT > 0){
+      flashT--;
+      const a = Math.min(1, flashT/30);
+      ctx.fillStyle = `rgba(0,0,0,${a})`;
+      ctx.fillRect(0,0,W,H);
+      if(flashT <= 18){
+        runRAF = requestAnimationFrame(frame);
+        return;
+      }
+    }
+
+    // 回忆定格
+    if(freeze > 0){
+      freeze--;
+      textTimer++;
+      textAlpha = Math.min(1, textAlpha + 0.02);
+      if(textChars < MEM[textIdx].text.length && textTimer % 4 === 0) textChars++;
+    } else {
+      distance += 1.2; // 很慢
+      groundOffset = (groundOffset + 1.2) % 60;
+      lane += (targetLane - lane) * 0.08;
+    }
+
+    // 检查是否到下一个回忆点
+    if(textIdx < MEM.length-1 && distance >= MEM[textIdx+1].dist){
+      textIdx++;
+      textChars = 0; textTimer = 0; textAlpha = 0;
+      freeze = 80; // 定格约1.3秒
+      flashT = 30; // 闪回
+    }
+
+    // 跑到最后：缓慢暗下进直播间
+    if(textIdx === MEM.length-1 && distance > MEM[textIdx].dist + 300){
+      endingFade = Math.min(1, endingFade + 0.01);
+      if(endingFade >= 1){
+        running = false;
+        cancelAnimationFrame(runRAF);
+        clearInterval(runTimer);
+        showScreen('live');
+        return;
+      }
+    }
+
+    // 跑道透视
     ctx.beginPath();
-    ctx.moveTo(W/2 - 60, 0);
-    ctx.lineTo(W/2 + 60, 0);
+    ctx.moveTo(W/2-50, H*0.3);
+    ctx.lineTo(W/2+50, H*0.3);
     ctx.lineTo(W, H);
     ctx.lineTo(0, H);
     ctx.closePath();
-    ctx.fillStyle = '#1a1a2e';
+    ctx.fillStyle = 'rgba(40,30,35,0.6)';
     ctx.fill();
 
     // 车道线
-    ctx.strokeStyle = 'rgba(255,255,255,.15)';
-    ctx.lineWidth = 2;
-    for(let l=0; l<2; l++){
+    ctx.strokeStyle = 'rgba(220,200,180,0.12)';
+    ctx.lineWidth = 1.5;
+    for(let l=0;l<2;l++){
       ctx.beginPath();
-      ctx.moveTo(laneX(l+1, 0), 0);
+      ctx.moveTo(laneX(l+1, 0.3), H*0.3);
       ctx.lineTo(laneX(l+1, 1), H);
       ctx.stroke();
     }
 
-    // 生成物体
-    spawnTimer++;
-    if(spawnTimer > 40){ spawnTimer = 0; spawn(); }
+    // 地面虚线
+    ctx.strokeStyle = 'rgba(220,200,180,0.15)';
+    for(let x=-groundOffset; x<W; x+=60){
+      ctx.beginPath();
+      ctx.moveTo(x, H-20); ctx.lineTo(x+30, H-20);
+      ctx.stroke();
+    }
 
-    // 更新并画障碍物和星星
-    const all = [...obs, ...stars];
-    all.forEach(o => {
-      o.z += 0.008;
-      if(o.z > 1){ o.dead = true; return; }
-      const y = o.z * H;
-      const x = laneX(o.l, o.z);
-      const size = 10 + o.z * 50;
-      if(o.type === 'obstacle'){
-        ctx.fillStyle = '#ff4444';
-        ctx.fillRect(x-size/2, y-size/2, size, size);
-      } else {
-        ctx.fillStyle = '#ffd166';
+    // 星星（极少，慢）
+    if(frameCount % 180 === 0){
+      stars.push({l: Math.floor(Math.random()*3), z: 0.3, got:false});
+    }
+    stars.forEach(s=>{
+      s.z += 0.004;
+      if(s.z > 1){ s.dead = true; return; }
+      const x = laneX(s.l, s.z);
+      const y = H*0.3 + (H*0.7)*s.z;
+      const size = 8 + s.z*30;
+      if(!s.got){
+        ctx.fillStyle = `rgba(255,209,102,${0.4 + s.z*0.6})`;
         ctx.font = size+'px serif';
         ctx.textAlign='center'; ctx.textBaseline='middle';
         ctx.fillText('⭐', x, y);
       }
     });
-    obs = obs.filter(o=>!o.dead);
-    stars = stars.filter(o=>!o.dead);
+    stars = stars.filter(s=>!s.dead);
 
-    // 平滑车道切换
-    lane += (targetLane - lane) * 0.15;
-
-    // 画玩家小球
+    // 玩家小球（暖色剪影）
     const px = laneX(lane, 1);
-    const py = H - 80;
+    const py = H - 60;
     ctx.beginPath();
-    ctx.arc(px, py, 22, 0, Math.PI*2);
-    ctx.fillStyle = '#ff8c42';
-    ctx.shadowColor = '#ffd166';
-    ctx.shadowBlur = 20;
+    ctx.arc(px, py, 18, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255,200,150,0.9)';
+    ctx.shadowColor = 'rgba(255,180,120,0.6)';
+    ctx.shadowBlur = 25;
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    // 碰撞检测
-    all.forEach(o => {
-      if(o.z > 0.9 && o.z < 1.0 && Math.abs(o.l - lane) < 0.3){
-        if(o.type === 'star' && !o.got){
-          o.got = true; o.dead = true; score++;
-          $('runScore').textContent = '⭐ ' + score;
-        } else if(o.type === 'obstacle' && !o.hit){
-          o.hit = true; o.dead = true;
-        }
-      }
-    });
+    // 打字机文字
+    if(MEM[textIdx]){
+      const txt = MEM[textIdx].text;
+      const shown = txt.slice(0, textChars);
+      ctx.textAlign = 'center';
+      ctx.font = `500 ${Math.min(20, W/18)}px -apple-system,"PingFang SC",sans-serif`;
+      ctx.fillStyle = `rgba(245,235,220,${0.3 + textAlpha*0.7})`;
+      ctx.shadowColor = 'rgba(0,0,0,0.8)';
+      ctx.shadowBlur = 10;
+      ctx.fillText(shown, W/2, H*0.25);
+      ctx.shadowBlur = 0;
+    }
+
+    // 胶片颗粒
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = grainPat;
+    ctx.save();
+    ctx.translate(-Math.random()*64, -Math.random()*64);
+    ctx.fillRect(0,0,W+64,H+64);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+
+    // 暗角
+    const vg = ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*0.3, W/2,H/2,Math.max(W,H)*0.7);
+    vg.addColorStop(0,'rgba(0,0,0,0)');
+    vg.addColorStop(1,'rgba(0,0,0,0.5)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0,0,W,H);
+
+    // 终点渐暗
+    if(endingFade > 0){
+      ctx.fillStyle = `rgba(0,0,0,${endingFade})`;
+      ctx.fillRect(0,0,W,H);
+    }
 
     runRAF = requestAnimationFrame(frame);
   }
   frame();
-
-  // 倒计时
-  runTimer = setInterval(()=>{
-    timeLeft--;
-    $('runTimer').textContent = timeLeft;
-    if(timeLeft <= 0){
-      running = false;
-      cancelAnimationFrame(runRAF);
-      clearInterval(runTimer);
-      showScreen('live');
-    }
-  }, 1000);
 }
 const $ = id => document.getElementById(id);
 
